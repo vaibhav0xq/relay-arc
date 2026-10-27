@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.vite/
+
+# Environment files — NEVER commit these
+.env
+.env.*
+
+# Private keys and secrets — NEVER commit these
+.circle/
+*.pem
+*.key
+recovery_file*
+
+# Foundry
+contracts/out/
+contracts/cache/
+broadcast/
+
+# Logs
+*.log
+/tmp/
+
+# Editor
+.DS_Store
+.idea/
+.vscode/

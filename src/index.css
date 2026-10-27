@@ -1,0 +1,257 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════════
+   Relay — Wallet Design System
+   Reference: MetaMask, Phantom, Sui Wallet.
+   Pure black canvas · Neutral surfaces · Violet accent.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+
+  /* Canvas — pure near-black like MetaMask extension */
+  --bg:           #000000;
+  --bg-alt:       #000000;
+
+  /* Surfaces — barely lifted from black */
+  --surface:      #111111;
+  --surface-2:    #191919;
+  --surface-3:    #222222;
+
+  /* Text */
+  --ink:          #ffffff;
+  --ink-2:        #d4d4d4;
+  --muted:        #888888;
+  --subtle:       #555555;
+
+  /* Borders — very subtle */
+  --border:       #222222;
+  --border-2:     #2e2e2e;
+
+  /* Accent — violet, same shade as Phantom */
+  --accent:         #8b5cf6;
+  --accent-hover:   #a78bfa;
+  --accent-dim:     rgba(139,92,246,0.14);
+  --accent-border:  rgba(139,92,246,0.28);
+  --accent-text:    #c4b5fd;
+
+  /* Action button surface — dark gray like MetaMask */
+  --action-bg:      #1a1a1a;
+  --action-border:  #2a2a2a;
+  --action-icon:    #ffffff;
+
+  /* Semantic */
+  --success:        #22c55e;
+  --success-dim:    rgba(34,197,94,0.10);
+  --success-border: rgba(34,197,94,0.22);
+
+  --danger:         #ef4444;
+  --danger-dim:     rgba(239,68,68,0.10);
+  --danger-border:  rgba(239,68,68,0.22);
+
+  --warning:        #f59e0b;
+  --warning-dim:    rgba(245,158,11,0.09);
+  --warning-border: rgba(245,158,11,0.25);
+
+  /* System */
+  --header-bg:  rgba(0,0,0,0.95);
+  --nav-bg:     rgba(0,0,0,0.98);
+
+  --focus: rgba(139,92,246,0.50);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:           #f2f2f7;
+  --bg-alt:       #f2f2f7;
+  --surface:      #ffffff;
+  --surface-2:    #f7f7f7;
+  --surface-3:    #eeeeee;
+
+  --ink:          #000000;
+  --ink-2:        #1c1c1e;
+  --muted:        #6c6c70;
+  --subtle:       #aeaeb2;
+
+  --border:       #e5e5ea;
+  --border-2:     #d1d1d6;
+
+  --accent:         #7c3aed;
+  --accent-hover:   #6d28d9;
+  --accent-dim:     rgba(124,58,237,0.08);
+  --accent-border:  rgba(124,58,237,0.20);
+  --accent-text:    #6d28d9;
+
+  --action-bg:      #f0f0f5;
+  --action-border:  #e0e0e8;
+  --action-icon:    #1c1c1e;
+
+  --success:        #16a34a;
+  --success-dim:    rgba(22,163,74,0.08);
+  --success-border: rgba(22,163,74,0.20);
+
+  --danger:         #dc2626;
+  --danger-dim:     rgba(220,38,38,0.08);
+  --danger-border:  rgba(220,38,38,0.20);
+
+  --warning:        #d97706;
+  --warning-dim:    rgba(217,119,6,0.08);
+  --warning-border: rgba(217,119,6,0.22);
+
+  --header-bg:  rgba(242,242,247,0.95);
+  --nav-bg:     rgba(242,242,247,0.98);
+
+  --focus: rgba(124,58,237,0.40);
+}
+
+/* ── Reset ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, 'SF Pro Display', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Mono ──────────────────────────────────────────────── */
+.mono {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 0.875em;
+}
+
+/* ── Scrollbar ───────────────────────────────────────── */
+::-webkit-scrollbar { width: 0px; }
+
+/* ── Focus ──────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ── Spinners ────────────────────────────────────────── */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+input[type="number"] { -moz-appearance: textfield; }
+
+/* ── Divider ─────────────────────────────────────────── */
+.divider { height: 1px; background: var(--border); }
+
+/* ── Section label ───────────────────────────────────── */
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── Action button (MetaMask square style) ───────────── */
+.wallet-action {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  padding: 12px 4px;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  transition: opacity 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.wallet-action:hover { opacity: 0.75; }
+.wallet-action:active { opacity: 0.5; }
+.wallet-action:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.wallet-action-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: var(--action-bg);
+  border: 1px solid var(--action-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wallet-action-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+/* ── Token row ───────────────────────────────────────── */
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+}
+.token-logo {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Pulse animation ─────────────────────────────────── */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+.pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+/* ── Fade in up ──────────────────────────────────────── */
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in-up { animation: fade-in-up 0.25s ease forwards; }
+
+/* ── Toggle switch ────────────────────────────────────── */
+.toggle-track {
+  width: 44px;
+  height: 26px;
+  border-radius: 13px;
+  padding: 3px;
+  transition: background 0.2s ease;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.toggle-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+.toggle-on  { background: var(--accent); }
+.toggle-on .toggle-thumb  { transform: translateX(18px); }
+.toggle-off { background: var(--surface-3); }
+.toggle-off .toggle-thumb { transform: translateX(0); }
+
+/* ── Row ─────────────────────────────────────────────── */
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  background: var(--surface);
+}
+.settings-row:not(:last-child) {
+  border-bottom: 1px solid var(--border);
+}
