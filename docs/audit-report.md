@@ -4,9 +4,41 @@
 **Auditor:** Arc Studio  
 **Scope:** Full project — Solidity contract, frontend, configuration, secrets hygiene
 
+> ## ⚠️ Superseded — correction added 2026-10-26
+>
+> **This report's central conclusion, "Code defects found: 0", did not hold.** It
+> was written before the contract was deployed and before the Send flow was ever
+> exercised against a live contract. A follow-up audit on 25–26 Oct found 19
+> defects, two of them security issues, and the Send flow did not work at all.
+>
+> What this report got wrong, specifically:
+>
+> | Claimed here | Actually |
+> |---|---|
+> | Send flow: PASS | **Failed.** Reached Approve & Pay, then errored. The approval transaction was never broadcast: `allowance` to the contract was `0`, the contract's only transaction was its own creation, and the account nonce never moved. |
+> | Code defects found: 0 | **19 defects**, including a chain-switch error that was never surfaced, receipt waits with no timeout, and an error parser that collapsed every revert into one generic string. |
+> | No secrets found: PASS | Still true, and re-verified. |
+> | Groups flow: PASS | Functionally worked, but **every wallet could see and pay into every other wallet's groups** — `createSplit` recorded no creator. Fixed since. |
+> | Explorer tab | Not assessed. It framed arbitrary URLs with `allow-same-origin` and `clipboard-read`, which in a wallet app hands a hostile page the clipboard. Fixed since. |
+> | Vite production build: PASS — ~13s | **Not currently verified.** See Test status below. |
+> | Forge tests: 42/42 | Now **54/54**. The original 42 all ran against a mock that returns `false` on failure and has no gas accounting, so none of them could reproduce the live token's behaviour. |
+> | TypeScript typecheck: 0 errors | Could not have been true against this dependency list: `scripts/compass-deploy.ts` imports `@circlefin/compass-chains`, which is not installed and not in `package.json`. Fixed by adding type declarations. |
+>
+> The method matters more than the list. This report inferred behaviour from
+> reading code. The follow-up read the chain: balances, allowances, nonces,
+> transaction history, simulated calls and the fee environment. Two theories that
+> looked convincing on the code alone — gas depletion, and a non-standard token
+> return value — were both disproved by measurement.
+>
+> **Treat the sections below as a record of what was checked on 23 Oct, not as a
+> current statement of health.** Current status lives in `README.md` and
+> `AGENTS.md`.
+
 ---
 
 ## Summary
+
+*(As assessed on 2026-10-23. See the correction above for what did not hold.)*
 
 | Category | Result |
 |---|---|
@@ -23,15 +55,45 @@
 | Payment actions disabled when no contract | PASS — 3 independent gates |
 | No private keys or secrets in project files | PASS |
 | Solidity compiles | PASS |
-| Forge tests | PASS — 42/42 |
-| No fake transaction or balance data | PASS |
+| Forge tests | PASS — 42/42 *(now 54/54)* |
+| No fake transaction or balance data | PASS *(re-verified)* |
 | Lint | PASS — 0 errors, 0 warnings |
-| TypeScript typecheck | PASS — 0 errors |
-| Vite production build | PASS — builds in ~13s |
+| TypeScript typecheck | PASS — 0 errors *(incorrect; see correction)* |
+| Vite production build | PASS — builds in ~13s *(not currently verified)* |
 
 **Blockers before testnet deployment: 1** (contract not yet deployed — expected)  
-**Code defects found: 0**  
-**Secrets found: 0**
+**Code defects found: 0** *(incorrect — 19 found on re-audit; see correction above)*  
+**Secrets found: 0** *(still true, re-verified 26 Oct)*
+
+---
+
+## Test status as of 2026-10-26
+
+| Check | Result |
+|---|---|
+| `forge test` | **54/54 passing**, 0 failed, 0 skipped |
+| `tsc --noEmit` | **0 errors**, including `scripts/` |
+| `vite build` | **Not yet verified** |
+
+`vite build` has not been run successfully anywhere. It could not run in the
+re-audit environment, which lacked the Linux-native `@rollup/rollup-linux-x64-gnu`
+and `@esbuild/linux-x64` packages, and it has not yet been run on the Windows
+development machine. A full esbuild bundle of `src/main.tsx` did succeed there
+(4.5 MB, every import resolved), which is good evidence but is not the same
+command. Run `bun run build` on Windows before trusting it.
+
+The Foundry run used forge 1.6.0-nightly with solc 0.8.28 (`commit.7893614a`),
+not the `v1.7.1` pinned in `.foundry-version`. The typecheck ran under TypeScript
+6.0.3, not the 7.0.2 pinned in `package.json`.
+
+### Contract deployment
+
+`0x0B15196ef85200AFB39268ea98B7B0F4c309399F` on Arc Testnet is the **legacy
+deployment** from 23 Oct. It predates the group-ownership and SafeERC20 changes
+and is not ABI-compatible with the current frontend: `getSplit` now returns six
+values, and `groupsOf` and `ownerOf` do not exist on it. The storage layout
+differs and the contract is not upgradeable, so **an updated deployment is still
+pending**. `groupCount()` reads `0` there, so there is no state to migrate.
 
 ---
 
