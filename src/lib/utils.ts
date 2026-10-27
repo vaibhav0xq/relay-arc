@@ -1,5 +1,13 @@
-import { isAddress } from 'viem'
-import { ACTIVE_CHAIN_ID, buildTxExplorerUrl, buildAddressExplorerUrl } from './constants'
+import {
+  isAddress,
+  BaseError,
+  ChainMismatchError,
+  ContractFunctionRevertedError,
+  TransactionNotFoundError,
+  UserRejectedRequestError,
+  WaitForTransactionReceiptTimeoutError,
+} from 'viem'
+import { ACTIVE_CHAIN_ID, NETWORK_LABEL, buildTxExplorerUrl, buildAddressExplorerUrl } from './constants'
 
 /** Shorten a hex address to 0x1234…abcd. chars controls leading chars (default 6). */
 export function shortAddress(addr: string, chars = 6): string {
@@ -73,15 +81,86 @@ export function formatTimestamp(ms: number): string {
   return new Date(ms).toLocaleDateString()
 }
 
-/** Parse a contract error into a user-friendly message */
+/**
+ * Turn a wallet or contract error into something a user can act on.
+ *
+ * Written against what Arc Testnet actually returns, verified on chain:
+ *
+ *   - USDC at 0x3600...0000 is Circle's FiatTokenProxy. It REVERTS with a
+ *     legacy string ("ERC20: transfer amount exceeds allowance"), it does not
+ *     return false. So `USDCSplitPay.PayoutFailed` is unreachable in practice
+ *     and the useful text lives in `ContractFunctionRevertedError.reason`.
+ *   - A dropped transaction produces no receipt at all (Arc discards anything
+ *     under the 20 Gwei base fee), which surfaces as a receipt timeout rather
+ *     than a revert.
+ *
+ * The raw error always goes to the console so `console-capture.ts` records it.
+ */
 export function parseContractError(error: unknown): string {
-  const msg = (error as Error)?.message?.toLowerCase() ?? ''
-  if (msg.includes('user rejected') || msg.includes('user denied')) return 'Transaction cancelled.'
-  if (msg.includes('insufficient funds') || msg.includes('exceeds balance')) return 'Insufficient USDC balance.'
-  if (msg.includes('insufficientallowance') || msg.includes('allowance')) return 'USDC allowance too low. Approve the exact amount first.'
-  if (msg.includes('zeroapproximation') || msg.includes('zeroamount')) return 'Amount must be greater than zero.'
-  if (msg.includes('invalidgroupid')) return 'Invalid group ID.'
-  if (msg.includes('reverted')) return 'Transaction failed. Check your balance and allowance.'
-  if (msg.includes('network') || msg.includes('timeout')) return 'Network error. Please retry.'
-  return 'Something went wrong. Please try again.'
+  console.error('[relay] tx error', error)
+
+  if (!(error instanceof BaseError)) {
+    const bare = (error as Error)?.message
+    return bare ? `Unexpected error: ${bare}` : 'Something went wrong. Please try again.'
+  }
+
+  // ── The user said no ────────────────────────────────────────────────────
+  if (error.walk((e) => e instanceof UserRejectedRequestError)) {
+    return 'You cancelled the request in your wallet.'
+  }
+
+  // ── Wallet is on the wrong network ──────────────────────────────────────
+  if (error.walk((e) => e instanceof ChainMismatchError)) {
+    return `Your wallet is on a different network. Switch it to ${NETWORK_LABEL} and try again.`
+  }
+
+  // ── Submitted, then never mined ─────────────────────────────────────────
+  if (error.walk((e) => e instanceof WaitForTransactionReceiptTimeoutError)) {
+    return 'The transaction was accepted by your wallet but never confirmed. '
+         + `On ${NETWORK_LABEL} a transaction below the 20 Gwei base fee is discarded `
+         + 'without a receipt. Raise the gas fee in your wallet and retry.'
+  }
+  if (error.walk((e) => e instanceof TransactionNotFoundError)) {
+    return 'The network has no record of that transaction. It was most likely dropped before it was mined.'
+  }
+
+  // ── A real revert ───────────────────────────────────────────────────────
+  const reverted = error.walk((e) => e instanceof ContractFunctionRevertedError)
+  if (reverted instanceof ContractFunctionRevertedError) {
+    // Legacy string reverts: what Circle's FiatToken actually emits.
+    const reason = reverted.reason ?? ''
+    if (reason.includes('exceeds allowance')) {
+      return 'USDC has not approved this contract to move your funds. '
+           + 'The approval step did not complete, so start over.'
+    }
+    if (reason.includes('exceeds balance')) return 'Your USDC balance is lower than the amount you are sending.'
+    if (reason.includes('blacklisted'))     return 'This address is blocked by the USDC issuer and cannot send or receive.'
+    if (reason.toLowerCase().includes('paused')) return 'USDC transfers are paused on this network right now.'
+
+    // Custom errors from USDCSplitPay.
+    const name = reverted.data?.errorName
+    const args = (reverted.data?.args ?? []) as readonly unknown[]
+    switch (name) {
+      case 'PayoutFailed':
+        return `USDC refused to move ${formatUsdcFixed(args[1] as bigint)} USDC to ${shortAddress(String(args[0]))}.`
+      case 'ZeroAmount':            return 'Enter an amount greater than zero.'
+      case 'ZeroAddress':           return 'That recipient address is not valid.'
+      case 'InvalidGroupId':        return `Group ${args[0]} does not exist.`
+      case 'NotGroupOwner':         return 'Only the wallet that created this group can pay into it.'
+      case 'InvalidShareTotal':     return 'The shares must add up to exactly 100%.'
+      case 'DuplicateRecipient':    return `${shortAddress(String(args[0]))} appears twice in the group.`
+      case 'InvalidRecipientCount': return 'A group needs between 1 and 20 recipients.'
+    }
+
+    if (reason) return `The contract rejected this: ${reason}`
+    if (name)   return `The contract rejected this: ${name}.`
+  }
+
+  // ── Not enough native USDC to pay for gas ───────────────────────────────
+  const short = error.shortMessage ?? error.message ?? ''
+  if (/insufficient funds/i.test(short)) {
+    return `Not enough USDC to cover gas. On ${NETWORK_LABEL} gas is paid in USDC.`
+  }
+
+  return short || 'Something went wrong. Please try again.'
 }

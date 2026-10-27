@@ -6,11 +6,17 @@ import { isAddress } from 'viem'
 import { useQueryClient } from '@tanstack/react-query'
 import { useApproveAndPay } from '@/hooks/useApproveAndPay'
 import { useActivity } from '@/hooks/useActivity'
-import { useGroupCount, useGetSplit, usePreviewSplit } from '@/hooks/useSplitContract'
+import { useMyGroupIds, useGetSplit, usePreviewSplit } from '@/hooks/useSplitContract'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { useContacts } from '@/hooks/useContacts'
 import { parseUsdcInput, formatUsdcFixed, shortAddress, txUrl, bpToPercent } from '@/lib/utils'
-import { SPLIT_PAY_ADDRESS, NETWORK_LABEL } from '@/lib/constants'
+import { SPLIT_PAY_ADDRESS, NETWORK_LABEL, GAS_RESERVE } from '@/lib/constants'
+
+/** Balance minus the gas reserve. Gas on Arc comes out of this same balance. */
+function spendableFrom(raw: bigint | undefined): bigint | undefined {
+  if (raw === undefined) return undefined
+  return raw > GAS_RESERVE ? raw - GAS_RESERVE : 0n
+}
 import type { View } from '@/App'
 
 type Mode  = 'single' | 'split'
@@ -98,10 +104,12 @@ function SingleFlow({ stage, setStage, onNavigate }: {
   const [recipientError, setRecipientError] = useState('')
 
   const amountRaw      = parseUsdcInput(amountStr)
-  const amountValid    = amountRaw !== null && amountRaw > 0n
+  const spendable      = spendableFrom(rawBalance)
+  const overBalance    = amountRaw !== null && spendable !== undefined && amountRaw > spendable
+  const amountValid    = amountRaw !== null && amountRaw > 0n && !overBalance
   const recipientValid = isAddress(recipient)
   const canReview      = recipientValid && amountValid && !!SPLIT_PAY_ADDRESS
-  const maxAmount      = rawBalance !== undefined ? formatUsdcFixed(rawBalance) : ''
+  const maxAmount      = spendable !== undefined ? formatUsdcFixed(spendable) : ''
 
   function validate() {
     if (!recipientValid) { setRecipientError('Enter a valid 0x address'); return false }
@@ -206,6 +214,11 @@ function SingleFlow({ stage, setStage, onNavigate }: {
         <p className="text-[11px] mt-1" style={{ color: 'var(--subtle)' }}>
           Balance: {rawBalance !== undefined ? `${formatUsdcFixed(rawBalance)} USDC` : '...'}
         </p>
+        {overBalance && (
+          <p className="text-[11px] mt-1" style={{ color: 'var(--danger)' }}>
+            Leave at least {formatUsdcFixed(GAS_RESERVE)} USDC for gas. On {NETWORK_LABEL} gas is paid in USDC.
+          </p>
+        )}
       </Field>
 
       <button
@@ -234,7 +247,7 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
   const [groupId,   setGroupId]   = useState<number | undefined>(initialGroupId)
   const [amountStr, setAmountStr] = useState('')
 
-  const { data: groupCount }  = useGroupCount()
+  const { ids: myGroupIds }   = useMyGroupIds()
   const { data: groupData }   = useGetSplit(groupId)
   const amountRaw = parseUsdcInput(amountStr)
 
@@ -245,9 +258,11 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
 
   const previewRecipients = preview?.[0]
   const previewAmounts    = preview?.[1]
-  const groupCount_n      = groupCount !== undefined ? Number(groupCount) : 0
-  const hasGroups         = groupCount_n > 0
-  const canReview         = groupId !== undefined && amountRaw !== null && amountRaw > 0n && !!SPLIT_PAY_ADDRESS && !!previewRecipients
+  const splitSpendable    = spendableFrom(rawBalance)
+  const splitOverBalance  = amountRaw !== null && splitSpendable !== undefined && amountRaw > splitSpendable
+  const groupIds          = myGroupIds ?? []
+  const hasGroups         = groupIds.length > 0
+  const canReview         = groupId !== undefined && amountRaw !== null && amountRaw > 0n && !splitOverBalance && !!SPLIT_PAY_ADDRESS && !!previewRecipients
 
   function handlePay() {
     if (!amountRaw || groupId === undefined) return
@@ -320,7 +335,7 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
       ) : (
         <>
           <Field label="Group">
-            <GroupSelector groupCount={groupCount_n} selected={groupId} onSelect={setGroupId} />
+            <GroupSelector groupIds={groupIds} selected={groupId} onSelect={setGroupId} />
           </Field>
 
           {groupId !== undefined && groupData && (
@@ -331,7 +346,7 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
             label="Total amount"
             right={rawBalance ? (
               <button
-                onClick={() => { if (rawBalance !== undefined) setAmountStr(formatUsdcFixed(rawBalance)) }}
+                onClick={() => { if (splitSpendable !== undefined) setAmountStr(formatUsdcFixed(splitSpendable)) }}
                 className="text-[11px] font-semibold px-2 py-0.5 rounded transition-opacity hover:opacity-75"
                 style={{ background: 'var(--accent-dim)', color: 'var(--accent)' }}
               >
@@ -347,6 +362,11 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
               className="w-full rounded-lg px-3 py-2.5 text-sm outline-none tabular-nums"
               style={{ background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--ink)' }}
             />
+            {splitOverBalance && (
+              <p className="text-[11px] mt-1" style={{ color: 'var(--danger)' }}>
+                Leave at least {formatUsdcFixed(GAS_RESERVE)} USDC for gas. On {NETWORK_LABEL} gas is paid in USDC.
+              </p>
+            )}
           </Field>
 
           {/* Live payout preview */}
@@ -396,8 +416,8 @@ function SplitFlow({ stage, setStage, onNavigate, initialGroupId }: {
 
 // ─── Group selector ───────────────────────────────────────────────────────────
 
-function GroupSelector({ groupCount, selected, onSelect }: {
-  groupCount: number; selected: number | undefined; onSelect: (id: number) => void
+function GroupSelector({ groupIds, selected, onSelect }: {
+  groupIds: readonly number[]; selected: number | undefined; onSelect: (id: number) => void
 }) {
   return (
     <div className="relative">
@@ -412,7 +432,7 @@ function GroupSelector({ groupCount, selected, onSelect }: {
         }}
       >
         <option value="" disabled>Select a group…</option>
-        {Array.from({ length: groupCount }, (_, i) => i + 1).map(id => (
+        {groupIds.map(id => (
           <option key={id} value={id} style={{ background: 'var(--surface)' }}>
             Group {id}
           </option>
@@ -559,8 +579,13 @@ function TxCard({ step, approvalTxHash, paymentTxHash, errorMessage, onReset }: 
         <p className="text-sm font-semibold" style={{ color: 'var(--danger)' }}>Transaction failed</p>
         {errorMessage && <p className="text-xs" style={{ color: 'var(--danger)' }}>{errorMessage}</p>}
       </div>
-      {(approvalTxHash || paymentTxHash) && (
-        <TxHashRow label="Approval" hash={approvalTxHash} />
+      {/* Both hashes, so a failure can be traced on the explorer. */}
+      {approvalTxHash && <TxHashRow label="Approval tx" hash={approvalTxHash} />}
+      {paymentTxHash  && <TxHashRow label="Payment tx"  hash={paymentTxHash}  />}
+      {!approvalTxHash && !paymentTxHash && (
+        <p className="text-xs text-center" style={{ color: 'var(--subtle)' }}>
+          Nothing was submitted to the network, so no funds moved.
+        </p>
       )}
       <button
         onClick={onReset}
