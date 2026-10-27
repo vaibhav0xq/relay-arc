@@ -5,9 +5,17 @@ node_modules/
 dist/
 .vite/
 
+# Vercel CLI local link and pulled env
+.vercel/
+
 # Environment files — NEVER commit these
 .env
 .env.*
+# ...except the template, which holds variable names only and no values.
+!.env.example
+
+# Captured dev console output. Local debugging artifact, not source.
+console.jsonl
 
 # Private keys and secrets — NEVER commit these
 .circle/
