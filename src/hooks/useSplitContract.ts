@@ -1,4 +1,4 @@
-import { useReadContract, useWriteContract } from 'wagmi'
+import { useAccount, useReadContract, useWriteContract } from 'wagmi'
 import { splitAbi } from '@/lib/splitAbi'
 import { ACTIVE_CHAIN_ID, SPLIT_PAY_ADDRESS } from '@/lib/constants'
 
@@ -19,6 +19,32 @@ export function useGroupCount() {
       refetchInterval: 10_000,
     },
   })
+}
+
+/**
+ * Group IDs belonging to the connected wallet.
+ *
+ * Groups are global on the contract, so listing 1..groupCount showed every
+ * wallet's groups to everyone. This reads only the caller's own.
+ */
+export function useMyGroupIds() {
+  const { address } = useAccount()
+
+  const query = useReadContract({
+    ...CONTRACT,
+    functionName: 'groupsOf',
+    args:         address ? [address] : undefined,
+    query: {
+      enabled:         !!SPLIT_PAY_ADDRESS && !!address,
+      refetchInterval: 10_000,
+    },
+  })
+
+  const ids = query.data !== undefined
+    ? (query.data as readonly bigint[]).map(Number)
+    : undefined
+
+  return { ...query, ids }
 }
 
 export function useGetSplit(groupId: number | undefined) {

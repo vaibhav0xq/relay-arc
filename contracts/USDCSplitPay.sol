@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /// @title USDCSplitPay
 /// @notice Non-custodial USDC payment contract for single-recipient and
@@ -28,6 +29,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// exactly 10 000. The first recipient absorbs any integer rounding remainder
 /// so that sum(payouts) == amount always holds.
 contract USDCSplitPay is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     // ───────────────────────────────────────────────────────────── types ──
 
     struct SplitGroup {
@@ -36,6 +39,7 @@ contract USDCSplitPay is ReentrancyGuard {
         uint256 paymentCount;
         uint256 totalPaid;     // 6-decimal USDC units
         uint256 createdAt;     // block.timestamp
+        address owner;         // the wallet that created this group
     }
 
     // ─────────────────────────────────────────────────────────── constants ──
@@ -53,6 +57,10 @@ contract USDCSplitPay is ReentrancyGuard {
 
     mapping(uint256 => SplitGroup) private _groups;
 
+    /// @dev Group IDs created by each wallet, so a client can list its own
+    ///      groups instead of enumerating every group on the contract.
+    mapping(address => uint256[]) private _groupsOf;
+
     // ───────────────────────────────────────────────────────────── errors ──
 
     error InvalidRecipientCount(uint256 count);
@@ -63,12 +71,17 @@ contract USDCSplitPay is ReentrancyGuard {
     error InvalidShareTotal(uint256 total);
     error InvalidGroupId(uint256 groupId);
     error ZeroAmount();
+    /// @dev Retained for ABI compatibility with the first deployment. Unreachable
+    ///      now that payouts go through SafeERC20, which bubbles the token's own
+    ///      revert reason rather than returning false.
     error PayoutFailed(address recipient, uint256 amount);
+    error NotGroupOwner(uint256 groupId, address caller);
 
     // ───────────────────────────────────────────────────────────── events ──
 
     event SplitCreated(
         uint256 indexed groupId,
+        address indexed owner,
         address[] recipients,
         uint256[] shares
     );
@@ -147,13 +160,16 @@ contract USDCSplitPay is ReentrancyGuard {
 
         SplitGroup storage group = _groups[groupId];
         group.createdAt = block.timestamp;
+        group.owner     = msg.sender;
 
         for (uint256 i = 0; i < len; i++) {
             group.recipients.push(recipients[i]);
             group.shares.push(shares[i]);
         }
 
-        emit SplitCreated(groupId, recipients, shares);
+        _groupsOf[msg.sender].push(groupId);
+
+        emit SplitCreated(groupId, msg.sender, recipients, shares);
     }
 
     /// @notice Pay a single recipient directly.
@@ -164,8 +180,9 @@ contract USDCSplitPay is ReentrancyGuard {
         if (recipient == address(0)) revert ZeroAddress(0);
         if (amount == 0) revert ZeroAmount();
 
-        bool ok = usdc.transferFrom(msg.sender, recipient, amount);
-        if (!ok) revert PayoutFailed(recipient, amount);
+        // SafeERC20 bubbles the token's own revert reason. Arc USDC is Circle's
+        // FiatToken, which reverts with a string rather than returning false.
+        usdc.safeTransferFrom(msg.sender, recipient, amount);
 
         emit SinglePayment(msg.sender, recipient, amount);
     }
@@ -180,6 +197,11 @@ contract USDCSplitPay is ReentrancyGuard {
         if (amount == 0) revert ZeroAmount();
 
         SplitGroup storage group = _groups[groupId];
+
+        // Groups are per-wallet. Without this, any wallet could push a payment
+        // through any other wallet's group.
+        if (msg.sender != group.owner) revert NotGroupOwner(groupId, msg.sender);
+
         uint256 len = group.recipients.length;
 
         uint256[] memory payouts = _computePayouts(group.shares, amount, len);
@@ -193,8 +215,7 @@ contract USDCSplitPay is ReentrancyGuard {
         for (uint256 i = 0; i < len; i++) {
             address recipient = group.recipients[i];
             uint256 payout = payouts[i];
-            bool ok = usdc.transferFrom(msg.sender, recipient, payout);
-            if (!ok) revert PayoutFailed(recipient, payout);
+            usdc.safeTransferFrom(msg.sender, recipient, payout);
             emit PayoutSent(groupId, paymentIndex, recipient, payout);
         }
     }
@@ -227,6 +248,8 @@ contract USDCSplitPay is ReentrancyGuard {
     /// @return paymentCount_ Number of splitPayment calls on this group.
     /// @return totalPaid_    Cumulative USDC distributed (6 decimals).
     /// @return createdAt_    Block timestamp when the group was created.
+    /// @return owner_        The wallet that created the group. Appended last so
+    ///                       existing positional reads keep working.
     function getSplit(uint256 groupId)
         external
         view
@@ -235,7 +258,8 @@ contract USDCSplitPay is ReentrancyGuard {
             uint256[] memory shares_,
             uint256 paymentCount_,
             uint256 totalPaid_,
-            uint256 createdAt_
+            uint256 createdAt_,
+            address owner_
         )
     {
         _requireValidGroup(groupId);
@@ -245,6 +269,20 @@ contract USDCSplitPay is ReentrancyGuard {
         paymentCount_ = group.paymentCount;
         totalPaid_    = group.totalPaid;
         createdAt_    = group.createdAt;
+        owner_        = group.owner;
+    }
+
+    /// @notice Group IDs created by `account`, oldest first.
+    /// @dev    Lets a client list one wallet's groups with a single call instead
+    ///         of reading every group from 1 to `groupCount`.
+    function groupsOf(address account) external view returns (uint256[] memory) {
+        return _groupsOf[account];
+    }
+
+    /// @notice The wallet that created `groupId`.
+    function ownerOf(uint256 groupId) external view returns (address) {
+        _requireValidGroup(groupId);
+        return _groups[groupId].owner;
     }
 
     // ─────────────────────────────────────────────────────────── internal ──

@@ -62,7 +62,24 @@ export const splitAbi = [
       { name: 'paymentCount_', type: 'uint256'   },
       { name: 'totalPaid_',    type: 'uint256'   },
       { name: 'createdAt_',    type: 'uint256'   },
+      { name: 'owner_',        type: 'address'   },
     ],
+  },
+  // ── groupsOf ────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'groupsOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256[]' }],
+  },
+  // ── ownerOf ─────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'groupId', type: 'uint256' }],
+    outputs: [{ name: '', type: 'address' }],
   },
   // ── groupCount ──────────────────────────────────────────────────────
   {
@@ -86,6 +103,7 @@ export const splitAbi = [
     name: 'SplitCreated',
     inputs: [
       { name: 'groupId',    type: 'uint256',   indexed: true  },
+      { name: 'owner',      type: 'address',   indexed: true  },
       { name: 'recipients', type: 'address[]', indexed: false },
       { name: 'shares',     type: 'uint256[]', indexed: false },
     ],
@@ -129,4 +147,5 @@ export const splitAbi = [
   { type: 'error', name: 'InvalidGroupId',        inputs: [{ name: 'groupId',        type: 'uint256' }] },
   { type: 'error', name: 'ZeroAmount',            inputs: []                                            },
   { type: 'error', name: 'PayoutFailed',          inputs: [{ name: 'recipient',      type: 'address' }, { name: 'amount', type: 'uint256' }] },
+  { type: 'error', name: 'NotGroupOwner',         inputs: [{ name: 'groupId',        type: 'uint256' }, { name: 'caller', type: 'address' }] },
 ] as const

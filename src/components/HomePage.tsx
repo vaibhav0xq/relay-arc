@@ -13,7 +13,7 @@ import {
 import { useAccount }     from 'wagmi'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { useActivity }    from '@/hooks/useActivity'
-import { useGroupCount }  from '@/hooks/useSplitContract'
+import { useMyGroupIds }  from '@/hooks/useSplitContract'
 import { usePreferences } from '@/hooks/usePreferences'
 import { WalletButton }   from '@/components/WalletButton'
 import { shortAddress, txUrl, formatTimestamp } from '@/lib/utils'
@@ -26,12 +26,13 @@ export function HomePage({ onNavigate }: HomePageProps) {
   const { address, isConnected, chainId } = useAccount()
   const { formatted, raw, isLoading }     = useUsdcBalance()
   const { entries }                       = useActivity()
-  const { data: groupCount }              = useGroupCount()
+  const { ids: myGroupIds }               = useMyGroupIds()
   const { prefs, update }                 = usePreferences()
 
   const onArc       = chainId === ACTIVE_CHAIN_ID
   const recent      = entries.slice(0, 4)
-  const groupCountN = groupCount !== undefined ? Number(groupCount) : 0
+  // Only this wallet's groups, not every group on the contract.
+  const groupCountN = myGroupIds !== undefined ? myGroupIds.length : 0
 
   /* Disconnected */
   if (!isConnected) {

@@ -1,7 +1,7 @@
 import { Plus, Users, ArrowRight, ArrowUpRightFromSquare } from 'lucide-react'
 import { WalletButton }   from '@/components/WalletButton'
 import { useAccount }     from 'wagmi'
-import { useGroupCount, useGetSplit } from '@/hooks/useSplitContract'
+import { useMyGroupIds, useGetSplit } from '@/hooks/useSplitContract'
 import { formatUsdcFixed, shortAddress, bpToPercent } from '@/lib/utils'
 import { SPLIT_PAY_ADDRESS } from '@/lib/constants'
 import type { View } from '@/App'
@@ -13,8 +13,9 @@ interface GroupsPageProps {
 
 export function GroupsPage({ onNavigate, onPayGroup }: GroupsPageProps) {
   const { isConnected } = useAccount()
-  const { data: groupCount, isLoading } = useGroupCount()
-  const count = groupCount !== undefined ? Number(groupCount) : undefined
+  // Only this wallet's groups. The contract holds everyone's.
+  const { ids: myGroupIds, isLoading } = useMyGroupIds()
+  const count = myGroupIds !== undefined ? myGroupIds.length : undefined
 
   if (!isConnected) {
     return (
@@ -86,9 +87,9 @@ export function GroupsPage({ onNavigate, onPayGroup }: GroupsPageProps) {
         </div>
       ) : count === 0 ? (
         <EmptyState onNavigate={onNavigate} />
-      ) : count !== undefined ? (
+      ) : myGroupIds !== undefined ? (
         <div className="space-y-3">
-          {Array.from({ length: count }, (_, i) => i + 1).map(id => (
+          {myGroupIds.map(id => (
             <GroupRow key={id} groupId={id} onPay={() => onPayGroup(id)} />
           ))}
         </div>

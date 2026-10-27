@@ -3,12 +3,15 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {USDCSplitPay} from "../USDCSplitPay.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 // ─────────────────────────────────────────────────────────── Mock ERC-20 ──
 
 /// @dev Minimal ERC-20 with 6 decimals for testing.
-///      transferFrom returns false instead of reverting when allowance or
-///      balance is insufficient — lets us test the PayoutFailed path directly.
+///      transferFrom returns false instead of reverting. Real Arc USDC
+///      (Circle FiatToken) reverts with a string instead, so this mock
+///      exercises the SafeERC20 "returned false" path. RevertingMockUSDC
+///      below covers what the live token actually does.
 contract MockUSDC {
     uint8 public constant decimals = 6;
     string public constant name = "Mock USDC";
@@ -24,7 +27,7 @@ contract MockUSDC {
         totalSupply += amount;
     }
 
-    function approve(address spender, uint256 amount) external returns (bool) {
+    function approve(address spender, uint256 amount) external virtual returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
@@ -165,8 +168,8 @@ contract USDCSplitPayTest is Test {
         shares[0] = 7_000;
         shares[1] = 3_000;
 
-        vm.expectEmit(true, false, false, true);
-        emit USDCSplitPay.SplitCreated(1, recipients, shares);
+        vm.expectEmit(true, true, false, true);
+        emit USDCSplitPay.SplitCreated(1, address(this), recipients, shares);
 
         split.createSplit(recipients, shares);
     }
@@ -187,7 +190,8 @@ contract USDCSplitPayTest is Test {
             uint256[] memory sh,
             uint256 pc,
             uint256 tp,
-            uint256 ca
+            uint256 ca,
+            address ow
         ) = split.getSplit(1);
 
         assertEq(r[0], alice);
@@ -197,6 +201,7 @@ contract USDCSplitPayTest is Test {
         assertEq(pc, 0);
         assertEq(tp, 0);
         assertEq(ca, ts);
+        assertEq(ow, address(this), "creator is recorded as owner");
     }
 
     // ══════════════════════════════════════════════════════════
@@ -381,7 +386,7 @@ contract USDCSplitPayTest is Test {
         // No approve call — allowance is 0.
         vm.startPrank(payer);
         vm.expectRevert(
-            abi.encodeWithSelector(USDCSplitPay.PayoutFailed.selector, alice, 1 * DECIMALS)
+            abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(usdc))
         );
         split.paySingle(alice, 1 * DECIMALS);
         vm.stopPrank();
@@ -394,7 +399,7 @@ contract USDCSplitPayTest is Test {
         usdc.approve(address(split), amount - 1); // one unit short
 
         vm.expectRevert(
-            abi.encodeWithSelector(USDCSplitPay.PayoutFailed.selector, alice, amount)
+            abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(usdc))
         );
         split.paySingle(alice, amount);
         vm.stopPrank();
@@ -407,7 +412,7 @@ contract USDCSplitPayTest is Test {
         usdc.approve(address(split), amount);
 
         vm.expectRevert(
-            abi.encodeWithSelector(USDCSplitPay.PayoutFailed.selector, alice, amount)
+            abi.encodeWithSelector(SafeERC20.SafeERC20FailedOperation.selector, address(usdc))
         );
         split.paySingle(alice, amount);
         vm.stopPrank();
@@ -424,6 +429,7 @@ contract USDCSplitPayTest is Test {
         uint256[] memory shares = new uint256[](2);
         shares[0] = 6_000;
         shares[1] = 4_000;
+        vm.prank(payer);
         groupId = split.createSplit(recipients, shares);
     }
 
@@ -436,6 +442,7 @@ contract USDCSplitPayTest is Test {
         shares[0] = 5_000;
         shares[1] = 3_000;
         shares[2] = 2_000;
+        vm.prank(payer);
         groupId = split.createSplit(recipients, shares);
     }
 
@@ -477,6 +484,7 @@ contract USDCSplitPayTest is Test {
         shares[0] = 3_334; // gets remainder
         shares[1] = 3_333;
         shares[2] = 3_333;
+        vm.prank(payer);
         uint256 groupId = split.createSplit(recipients, shares);
 
         // amount = 10 units (not DECIMALS, to expose rounding at low values)
@@ -506,7 +514,7 @@ contract USDCSplitPayTest is Test {
         _splitPay(groupId, 10 * DECIMALS);
         _splitPay(groupId, 20 * DECIMALS);
 
-        (, , uint256 pc, , ) = split.getSplit(groupId);
+        (, , uint256 pc, , , ) = split.getSplit(groupId);
         assertEq(pc, 2, "payment count");
     }
 
@@ -518,7 +526,7 @@ contract USDCSplitPayTest is Test {
         _splitPay(groupId, first);
         _splitPay(groupId, second);
 
-        (, , , uint256 tp, ) = split.getSplit(groupId);
+        (, , , uint256 tp, , ) = split.getSplit(groupId);
         assertEq(tp, first + second, "total paid");
     }
 
@@ -587,7 +595,7 @@ contract USDCSplitPayTest is Test {
 
         // No approve — contract will try transferFrom and the mock returns false.
         vm.startPrank(payer);
-        vm.expectRevert(); // PayoutFailed
+        vm.expectRevert(); // reverts inside the token
         split.splitPayment(groupId, 100 * DECIMALS);
         vm.stopPrank();
     }
@@ -599,7 +607,7 @@ contract USDCSplitPayTest is Test {
         vm.startPrank(payer);
         usdc.approve(address(split), amount - 1);
 
-        vm.expectRevert(); // PayoutFailed
+        vm.expectRevert(); // reverts inside the token
         split.splitPayment(groupId, amount);
         vm.stopPrank();
     }
@@ -611,7 +619,7 @@ contract USDCSplitPayTest is Test {
         vm.startPrank(payer);
         usdc.approve(address(split), amount);
 
-        vm.expectRevert(); // PayoutFailed
+        vm.expectRevert(); // reverts inside the token
         split.splitPayment(groupId, amount);
         vm.stopPrank();
     }
@@ -630,6 +638,7 @@ contract USDCSplitPayTest is Test {
         uint256[] memory shares = new uint256[](2);
         shares[0] = 6_000;
         shares[1] = 4_000;
+        vm.prank(payer);
         uint256 groupId = rejectSplit.createSplit(recipients, shares);
 
         // Make bob's transfer always fail.
@@ -640,7 +649,8 @@ contract USDCSplitPayTest is Test {
         vm.startPrank(payer);
         rejectUsdc.approve(address(rejectSplit), amount);
 
-        vm.expectRevert(); // PayoutFailed for bob
+        // SafeERC20 turns the mock's false return into SafeERC20FailedOperation.
+        vm.expectRevert(); // reverts on bob's payout
         rejectSplit.splitPayment(groupId, amount);
         vm.stopPrank();
 
@@ -681,6 +691,8 @@ contract USDCSplitPayTest is Test {
         shares[0] = 3_334;
         shares[1] = 3_333;
         shares[2] = 3_333;
+        // The payer must own the group: this test also executes the payment.
+        vm.prank(payer);
         uint256 groupId = split.createSplit(recipients, shares);
 
         uint256 amount = 10;
@@ -729,5 +741,270 @@ contract USDCSplitPayTest is Test {
             abi.encodeWithSelector(USDCSplitPay.InvalidGroupId.selector, 0)
         );
         split.getSplit(0);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Arc-realistic mocks
+//
+// The 42 tests above run against MockUSDC, which returns false on failure and
+// whose balance moves only when a test moves it. Neither matches Arc Testnet,
+// where USDC at 0x3600...0000 is Circle's FiatTokenProxy and gas is paid in
+// USDC out of that same balance. Both behaviours are modelled below.
+// ══════════════════════════════════════════════════════════════════════════
+
+/// @dev Mirrors Circle's FiatToken: REVERTS with a legacy string rather than
+///      returning false. Verified against Arc Testnet on 2026-10-25, where
+///      eth_call of paySingle returned
+///      "execution reverted: ERC20: transfer amount exceeds allowance".
+contract RevertingMockUSDC is MockUSDC {
+    function transferFrom(address from, address to, uint256 amount) external override returns (bool) {
+        require(allowance[from][msg.sender] >= amount, "ERC20: transfer amount exceeds allowance");
+        require(balanceOf[from] >= amount, "ERC20: transfer amount exceeds balance");
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+}
+
+/// @dev Models Arc's native-USDC gas: every transaction the payer sends costs
+///      USDC out of the balance the ERC-20 interface reports. The fee matches
+///      the ~0.018 USDC observed on Arc Testnet.
+contract GasChargingMockUSDC is MockUSDC {
+    uint256 public constant GAS_FEE = 18_000; // 0.018 USDC
+
+    function approve(address spender, uint256 amount) external override returns (bool) {
+        allowance[msg.sender][spender] = amount;
+        _chargeGas(msg.sender);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 amount) external override returns (bool) {
+        _chargeGas(from); // the payer pays for the payment transaction too
+        require(allowance[from][msg.sender] >= amount, "ERC20: transfer amount exceeds allowance");
+        require(balanceOf[from] >= amount, "ERC20: transfer amount exceeds balance");
+        allowance[from][msg.sender] -= amount;
+        balanceOf[from] -= amount;
+        balanceOf[to] += amount;
+        return true;
+    }
+
+    function _chargeGas(address account) private {
+        balanceOf[account] = balanceOf[account] > GAS_FEE ? balanceOf[account] - GAS_FEE : 0;
+    }
+}
+
+contract USDCSplitPayArcBehaviourTest is Test {
+    USDCSplitPay internal split;
+
+    address internal payer = address(0xA001);
+    address internal alice = address(0xA101);
+    address internal bob   = address(0xA102);
+
+    uint256 internal constant DECIMALS = 1e6;
+    /// The balance actually observed on the reporter's wallet: 508.980105 USDC.
+    uint256 internal constant REAL_BALANCE = 508_980_105;
+    /// What src/lib/constants.ts holds back for gas: 0.10 USDC.
+    uint256 internal constant GAS_RESERVE = 100_000;
+
+    // ───────────── the live token reverts, it does not return false ─────────
+
+    function test_revertingToken_bubblesAllowanceString() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, 10 * DECIMALS);
+
+        // No approval at all: exactly the on-chain state measured for the
+        // reporter's wallet, where allowance(wallet, contract) was 0.
+        vm.prank(payer);
+        vm.expectRevert("ERC20: transfer amount exceeds allowance");
+        split.paySingle(alice, 1 * DECIMALS);
+    }
+
+    function test_revertingToken_bubblesBalanceString() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, 1 * DECIMALS);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), 5 * DECIMALS);
+        vm.expectRevert("ERC20: transfer amount exceeds balance");
+        split.paySingle(alice, 5 * DECIMALS);
+        vm.stopPrank();
+    }
+
+    function test_revertingToken_paySingleStillWorks() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, 10 * DECIMALS);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), 5 * DECIMALS);
+        split.paySingle(alice, 5 * DECIMALS);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 5 * DECIMALS, "alice paid");
+        assertEq(usdc.allowance(payer, address(split)), 0, "allowance consumed exactly");
+    }
+
+    // ───────────── Arc's native-USDC gas model ──────────────────────────────
+
+    /// The Max button approves the whole balance. Gas for the approval comes out
+    /// of that same balance, so the payment can never settle.
+    function test_gasModel_maxButtonAmountFails() public {
+        GasChargingMockUSDC usdc = new GasChargingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, REAL_BALANCE);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), REAL_BALANCE); // Max
+        vm.expectRevert("ERC20: transfer amount exceeds balance");
+        split.paySingle(alice, REAL_BALANCE);
+        vm.stopPrank();
+    }
+
+    /// With the reserve held back, the same payment settles. This is the
+    /// regression guard for the Max fix in src/components/PayPage.tsx.
+    function test_gasModel_reservedAmountSucceeds() public {
+        GasChargingMockUSDC usdc = new GasChargingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, REAL_BALANCE);
+
+        uint256 amount = REAL_BALANCE - GAS_RESERVE;
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), amount);
+        split.paySingle(alice, amount);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), amount, "recipient paid in full");
+    }
+
+    /// The decisive one. A 5 USDC payment from a 508.98 USDC balance settles
+    /// even with gas charged on both transactions, which is why gas depletion
+    /// does NOT explain the reported failure. Keep this test as the record.
+    function test_gasModel_smallPaymentFromLargeBalanceSucceeds() public {
+        GasChargingMockUSDC usdc = new GasChargingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, REAL_BALANCE);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), 5 * DECIMALS);
+        split.paySingle(alice, 5 * DECIMALS);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 5 * DECIMALS, "5 USDC arrives");
+        // Balance is down by the payment plus two gas charges, and nothing else.
+        assertEq(
+            usdc.balanceOf(payer),
+            REAL_BALANCE - 5 * DECIMALS - 2 * usdc.GAS_FEE(),
+            "only payment and gas left the payer"
+        );
+    }
+
+    function test_gasModel_oneCentPaymentSucceeds() public {
+        GasChargingMockUSDC usdc = new GasChargingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, REAL_BALANCE);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), 10_000); // 0.01 USDC
+        split.paySingle(alice, 10_000);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 10_000, "0.01 USDC arrives");
+    }
+
+    // ───────────── group ownership ──────────────────────────────────────────
+
+    function _group(address owner_, address r0, address r1) internal returns (uint256 id) {
+        address[] memory recipients = new address[](2);
+        recipients[0] = r0;
+        recipients[1] = r1;
+        uint256[] memory shares = new uint256[](2);
+        shares[0] = 6_000;
+        shares[1] = 4_000;
+        vm.prank(owner_);
+        id = split.createSplit(recipients, shares);
+    }
+
+    function test_ownership_strangerCannotPayIntoYourGroup() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+
+        address stranger = address(0xBEEF);
+        usdc.mint(stranger, 100 * DECIMALS);
+
+        uint256 groupId = _group(payer, alice, bob);
+
+        vm.startPrank(stranger);
+        usdc.approve(address(split), 10 * DECIMALS);
+        vm.expectRevert(
+            abi.encodeWithSelector(USDCSplitPay.NotGroupOwner.selector, groupId, stranger)
+        );
+        split.splitPayment(groupId, 10 * DECIMALS);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 0, "no payout to alice");
+        assertEq(usdc.balanceOf(bob),   0, "no payout to bob");
+    }
+
+    function test_ownership_ownerCanPayIntoOwnGroup() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        usdc.mint(payer, 100 * DECIMALS);
+
+        uint256 groupId = _group(payer, alice, bob);
+
+        vm.startPrank(payer);
+        usdc.approve(address(split), 10 * DECIMALS);
+        split.splitPayment(groupId, 10 * DECIMALS);
+        vm.stopPrank();
+
+        assertEq(usdc.balanceOf(alice), 6 * DECIMALS, "alice 60%");
+        assertEq(usdc.balanceOf(bob),   4 * DECIMALS, "bob 40%");
+    }
+
+    function test_ownership_groupsOfListsOnlyOwnGroups() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+
+        address other = address(0xBEEF);
+
+        uint256 mine1  = _group(payer, alice, bob);
+        uint256 theirs = _group(other, alice, bob);
+        uint256 mine2  = _group(payer, bob, alice);
+
+        uint256[] memory minimum = split.groupsOf(payer);
+        assertEq(minimum.length, 2, "payer owns two groups");
+        assertEq(minimum[0], mine1);
+        assertEq(minimum[1], mine2);
+
+        uint256[] memory theirList = split.groupsOf(other);
+        assertEq(theirList.length, 1, "other owns one group");
+        assertEq(theirList[0], theirs);
+
+        // groupCount is still global; that is exactly why groupsOf exists.
+        assertEq(split.groupCount(), 3, "three groups on the contract");
+    }
+
+    function test_ownership_ownerOfAndGetSplitAgree() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+
+        uint256 groupId = _group(payer, alice, bob);
+
+        assertEq(split.ownerOf(groupId), payer, "ownerOf");
+        (, , , , , address ow) = split.getSplit(groupId);
+        assertEq(ow, payer, "getSplit owner_");
+    }
+
+    function test_ownership_groupsOfIsEmptyForStranger() public {
+        RevertingMockUSDC usdc = new RevertingMockUSDC();
+        split = new USDCSplitPay(address(usdc));
+        _group(payer, alice, bob);
+
+        assertEq(split.groupsOf(address(0xBEEF)).length, 0, "stranger owns nothing");
     }
 }
