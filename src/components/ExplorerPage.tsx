@@ -51,6 +51,27 @@ function isSecure(url: string): boolean {
   return url.startsWith('https://')
 }
 
+/**
+ * Only the curated sites below are ever framed inside the app.
+ *
+ * Framing an arbitrary site inside a wallet's own chrome is a phishing surface:
+ * the user sees this app's header and trusts what is underneath it. Anything
+ * not on this list is handed to the real browser, where it gets a real address
+ * bar and the browser's own warnings.
+ */
+function isFramingAllowed(url: string): boolean {
+  let host: string
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:') return false
+    host = u.hostname.toLowerCase()
+  } catch {
+    return false
+  }
+
+  return FRAMEABLE_HOSTS.some((allowed) => host === allowed || host.endsWith('.' + allowed))
+}
+
 /* ── Featured dapps ──────────────────────────────────────────── */
 
 interface DApp {
@@ -76,6 +97,9 @@ const FEATURED: DApp[] = [
 
 const CATEGORIES = [...new Set(FEATURED.map(d => d.category))]
 
+/** Hostnames the in-app frame may load. Everything else goes to the real browser. */
+const FRAMEABLE_HOSTS: string[] = FEATURED.map(d => new URL(d.url).hostname.toLowerCase())
+
 /* ── Component ───────────────────────────────────────────────── */
 
 type BrowserState = 'home' | 'loading' | 'loaded' | 'blocked'
@@ -89,6 +113,8 @@ export function ExplorerPage() {
   /* Browser state */
   const [state,       setState]       = useState<BrowserState>('home')
   const [currentUrl,  setCurrentUrl]  = useState('')
+  /* Why the page is not being framed: the site refused, or this app refused. */
+  const [blockReason, setBlockReason] = useState<'headers' | 'policy'>('headers')
   const iframeRef                     = useRef<HTMLIFrameElement>(null)
 
   /* History stack — stored as state so Back/Forward buttons re-render */
@@ -120,6 +146,17 @@ export function ExplorerPage() {
   const navigate = useCallback((rawUrl: string) => {
     const url = resolveInput(rawUrl)
     if (!url) return
+
+    // Not on the curated list: never frame it, hand it to the real browser.
+    if (!isFramingAllowed(url)) {
+      setCurrentUrl(url)
+      setBarValue(url)
+      setBlockReason('policy')
+      setState('blocked')
+      return
+    }
+
+    setBlockReason('headers')
     setHistory(prev => {
       const stack = prev.slice(0, histIdx + 1)
       stack.push(url)
@@ -441,10 +478,12 @@ export function ExplorerPage() {
           </div>
           <div>
             <p className="text-[15px] font-semibold mb-1" style={{ color: 'var(--ink)' }}>
-              This site cannot be embedded
+              {blockReason === 'policy' ? 'Opens outside the app' : 'This site cannot be embedded'}
             </p>
             <p className="text-[12px] leading-relaxed" style={{ color: 'var(--muted)' }}>
-              {displayUrl(currentUrl)} blocks in-app browsers using security headers. Open it in your system browser instead.
+              {blockReason === 'policy'
+                ? `${displayUrl(currentUrl)} is not one of the sites Relay will display inside the app. Open it in your browser, where you get a real address bar.`
+                : `${displayUrl(currentUrl)} blocks in-app browsers using security headers. Open it in your system browser instead.`}
             </p>
           </div>
           <a
@@ -475,8 +514,24 @@ export function ExplorerPage() {
           onLoad={handleIframeLoad}
           onError={handleIframeError}
           title="In-app browser"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-storage-access-by-user-activation"
-          allow="clipboard-read; clipboard-write"
+          /*
+           * Deliberately narrow. Three permissions were removed:
+           *
+           *   allow-same-origin  — with allow-scripts this lets a page served
+           *     from this app's own origin break out of the sandbox entirely
+           *     and reach the wallet session. Any URL could be typed in, this
+           *     app's own included.
+           *   allow-popups-to-escape-sandbox — a popup opened by a framed page
+           *     would have run with no sandbox at all.
+           *   clipboard-read (via `allow`) — in a wallet the clipboard holds
+           *     addresses and worse, and no framed site has any business
+           *     reading it.
+           *
+           * allow-popups is kept so a legitimate sign-in popup still works,
+           * but it now inherits this sandbox rather than escaping it.
+           */
+          sandbox="allow-scripts allow-forms allow-popups allow-storage-access-by-user-activation"
+          referrerPolicy="no-referrer"
           className="flex-1 w-full border-0"
           style={{
             opacity:    state === 'loaded' ? 1 : 0,
